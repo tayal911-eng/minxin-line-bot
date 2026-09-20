@@ -15,11 +15,15 @@ const lineConfig = {
 // Supabase 設定
 const supabaseUrl = 'https://jxbfxtppawnqscmkvbue.supabase.co';
 const supabaseKey = 'sb_publishable_aRp3k34gK-ntEDUs4EHi2w_qqd-yrx-';
+const ws = require('ws');
 const supabase = createClient(supabaseUrl, supabaseKey, {
   realtime: {
-    transport: require('ws')
-  }
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
 });
+supabase.realtime.setAuth(channelAccessToken);
 // LINE Client
 const client = new Client(lineConfig);
 
