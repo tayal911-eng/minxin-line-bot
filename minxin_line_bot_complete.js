@@ -1,10 +1,7 @@
 const express = require('express');
-const LINE = require('@line/bot-sdk');
+const { Client, middleware } = require('@line/bot-sdk');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
-
-// LINE Bot SDK 導入
-const { Client, middleware } = LINE;
 
 // 設定全局 WebSocket，讓 Supabase 在 Node.js 環境中使用
 global.WebSocket = ws;
