@@ -1,5 +1,5 @@
 const express = require('express');
-const sdk = require('@line/bot-sdk');
+const { Client, middleware } = require('@line/bot-sdk');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 
@@ -27,10 +27,10 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
 });
 
 // LINE Client
-const client = new sdk.Client(lineConfig);
+const client = new Client(lineConfig);
 
 // Middleware
-app.use(sdk.middleware(lineConfig));
+app.use(middleware(lineConfig));
 
 // 健康檢查
 app.get('/', (req, res) => {
