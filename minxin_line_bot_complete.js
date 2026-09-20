@@ -1,311 +1,339 @@
+// =========================================================
+// MinXin 健身房 減重挑戰 LINE Bot
+// Heroku 部署版本
+// =========================================================
+
 const express = require('express');
-const line = require('@line/bot-sdk');
 const { createClient } = require('@supabase/supabase-js');
-const ws = require('ws');
-
-// 正確的導入方式
-const Client = line.Client;
-const middleware = line.middleware;
-
-// 設定全局 WebSocket，讓 Supabase 在 Node.js 環境中使用
-global.WebSocket = ws;
+const crypto = require('crypto');
+require('dotenv').config();
 
 const app = express();
+app.use(express.json());
 
-// LINE Bot 設定
-const lineConfig = {
-  channelId: '2009523446',
-  channelSecret: '043703672979c8bc03b016f09dc69c3d',
-  channelAccessToken: 'pma4dRHbAsfzdVIdP2imlcowfJZ2gVbN0/EsC+RgQVG4Rxxx2HSASmOXkoe0eGbhE+eueOiescyyJCjVZgpi/zcKKF7s2vNWWAc+OicD3kYEh4noMvtxG6mCfrHTrdNIgtAloBf8gDjTnOnEI9zNeAdB04t89/1O/w1cDnyilFU='
-};
+// =========================================================
+// 環境變數設定
+// =========================================================
 
-// Supabase 設定（含 WebSocket 支持）
-const supabaseUrl = 'https://jxbfxtppawnqscmkvbue.supabase.co';
-const supabaseKey = 'sb_publishable_aRp3k34gK-ntEDUs4EHi2w_qqd-yrx-';
-const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: {
-    params: {
-      eventsPerSecond: 10
+const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+// 初始化Supabase客戶端
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// =========================================================
+// LINE Webhook Signature 驗證
+// =========================================================
+
+function verifyLineSignature(body, signature) {
+  const hash = crypto
+    .createHmac('sha256', LINE_CHANNEL_SECRET)
+    .update(body, 'utf8')
+    .digest('base64');
+  return hash === signature;
+}
+
+// =========================================================
+// LINE Bot Webhook 端點
+// =========================================================
+
+app.post('/webhook', async (req, res) => {
+  const signature = req.headers['x-line-signature'];
+  const body = req.rawBody || JSON.stringify(req.body);
+
+  // 驗證LINE簽名
+  if (!verifyLineSignature(body, signature)) {
+    console.log('❌ 簽名驗證失敗');
+    return res.status(401).send('Invalid signature');
+  }
+
+  // 處理多個事件
+  const events = req.body.events;
+  for (const event of events) {
+    if (event.type === 'message' && event.message.type === 'text') {
+      await handleTextMessage(event);
     }
   }
+
+  res.status(200).send('OK');
 });
 
-// LINE Client
-const client = new Client(lineConfig);
+// =========================================================
+// 處理文字訊息
+// =========================================================
 
-// Middleware
-app.use(middleware(lineConfig));
-
-// 健康檢查
-app.get('/', (req, res) => {
-  res.send('MinXin 減重挑戰 LINE Bot 運行中！');
-});
-
-// Webhook 處理
-app.post('/callback', async (req, res) => {
-  try {
-    const events = req.body.events;
-    await Promise.all(events.map(event => handleEvent(event)));
-    res.json({ status: 'ok' });
-  } catch (err) {
-    console.error('Error:', err);
-    res.status(500).end();
-  }
-});
-
-// 事件處理函數
-async function handleEvent(event) {
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return Promise.resolve(null);
-  }
-
-  const text = event.message.text;
+async function handleTextMessage(event) {
+  const userText = event.message.text;
   const userId = event.source.userId;
   const replyToken = event.replyToken;
 
-  // 檢查是否是簽到指令
-  if (text.includes('/簽到') || text.includes('/签到')) {
-    return handleCheckIn(text, userId, replyToken);
-  }
+  console.log(`收到訊息: ${userText} (User: ${userId})`);
 
-  // 排行榜指令
-  if (text.includes('/排行榜')) {
-    return handleLeaderboard(replyToken);
+  // 檢查是否為簽到訊息（以/簽到開頭）
+  if (userText.startsWith('/簽到')) {
+    await processCheckIn(event, userText, userId, replyToken);
+  } else if (userText === '/排行榜') {
+    await sendLeaderboard(event, replyToken);
+  } else if (userText === '/我的進度') {
+    await sendMyProgress(event, userId, replyToken);
+  } else {
+    // 其他訊息，給予幫助提示
+    await sendReplyMessage(replyToken, '👋 歡迎使用MinXin減重挑戰系統！\n\n可用指令：\n/簽到 - 簽到（格式見下方）\n/排行榜 - 查看RPG排行榜\n/我的進度 - 查看個人進度\n\n簽到格式:\n/簽到\n早餐：粥配菜\n午餐：便當\n晚餐：白飯\n運動：有');
   }
-
-  // 我的進度指令
-  if (text.includes('/我的進度') || text.includes('/我的进度')) {
-    return handleMyProgress(userId, replyToken);
-  }
-
-  return Promise.resolve(null);
 }
 
-// 處理簽到
-async function handleCheckIn(text, userId, replyToken) {
+// =========================================================
+// 處理簽到訊息
+// =========================================================
+
+async function processCheckIn(event, userText, userId, replyToken) {
   try {
-    // 解析簽到資訊
-    const checkInData = parseCheckIn(text);
-    
-    if (!checkInData) {
-      return client.replyMessage(replyToken, {
-        type: 'text',
-        text: '簽到格式不正確。請按照以下格式：\n/簽到\n早餐：粥配菜\n午餐：便當\n晚餐：白飯\n運動：有'
-      });
+    // 解析簽到內容
+    const lines = userText.split('\n');
+    let breakfast = '';
+    let lunch = '';
+    let dinner = '';
+    let exercise = false;
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('早餐：')) breakfast = line.replace('早餐：', '').trim();
+      if (line.startsWith('午餐：')) lunch = line.replace('午餐：', '').trim();
+      if (line.startsWith('晚餐：')) dinner = line.replace('晚餐：', '').trim();
+      if (line.startsWith('運動：')) {
+        const exerciseText = line.replace('運動：', '').trim();
+        exercise = exerciseText === '有' || exerciseText === '有運動';
+      }
     }
 
-    // 先取得學員資訊（根據 LINE userId）
-    const { data: studentData, error: studentError } = await supabase
+    // 從LINE userId取得或建立學員
+    let { data: student, error: studentError } = await supabase
       .from('students_minxin')
-      .select('id, name')
-      .eq('line_user_id', userId)
+      .select('id, student_name')
+      .eq('line_id', userId)
       .single();
 
-    let studentId;
-    if (!studentData) {
-      // 如果沒有記錄，先創建
-      const { data: newStudent, error: createError } = await supabase
+    if (studentError || !student) {
+      // 如果沒有對應學員，建立一個
+      const { data: newStudent, error: insertError } = await supabase
         .from('students_minxin')
-        .insert({
-          line_user_id: userId,
-          name: `學員_${userId.slice(-6)}`
-        })
+        .insert([
+          {
+            student_name: `使用者_${userId.substring(0, 10)}`,
+            line_id: userId,
+            current_level: 1,
+            total_exp: 0
+          }
+        ])
         .select()
         .single();
 
-      if (createError) throw createError;
-      studentId = newStudent.id;
-    } else {
-      studentId = studentData.id;
+      if (insertError) {
+        await sendReplyMessage(replyToken, '❌ 建立學員失敗，請聯絡教練');
+        console.error('插入學員錯誤:', insertError);
+        return;
+      }
+      student = newStudent;
     }
 
-    // 今天的日期
+    // 取得今天的日期
     const today = new Date().toISOString().split('T')[0];
 
-    // 存儲簽到記錄到 attendance_minxin
-    const { error: insertError } = await supabase
+    // 檢查今天是否已簽到
+    const { data: existingAttendance } = await supabase
       .from('attendance_minxin')
-      .insert({
-        student_id: studentId,
-        date: today,
-        breakfast: checkInData.breakfast || null,
-        lunch: checkInData.lunch || null,
-        dinner: checkInData.dinner || null,
-        exercise: checkInData.exercise ? '有' : '無',
-        notes: checkInData.notes || null,
-        check_in_time: new Date().toISOString()
-      });
-
-    if (insertError) throw insertError;
-
-    // 計算經驗值並更新 RPG Progress
-    const expGain = 10 + (checkInData.exercise ? 15 : 0); // 簽到 10 exp，運動 +15 exp
-    
-    const { data: rpgData } = await supabase
-      .from('rpg_progress_minxin')
-      .select('current_exp, level')
-      .eq('student_id', studentId)
+      .select('id')
+      .eq('student_id', student.id)
+      .eq('check_in_date', today)
       .single();
 
-    if (rpgData) {
-      let newExp = (rpgData.current_exp || 0) + expGain;
-      let newLevel = rpgData.level || 1;
+    if (existingAttendance) {
+      await sendReplyMessage(replyToken, `⚠️ ${student.student_name}，你今天已經簽到過囉！`);
+      return;
+    }
 
-      // 每 100 exp 升一級
-      if (newExp >= 100) {
-        newLevel += Math.floor(newExp / 100);
-        newExp = newExp % 100;
+    // 新增簽到紀錄
+    const { data: attendance, error: attendanceError } = await supabase
+      .from('attendance_minxin')
+      .insert([
+        {
+          student_id: student.id,
+          check_in_date: today,
+          breakfast,
+          lunch,
+          dinner,
+          exercise
+        }
+      ])
+      .select()
+      .single();
+
+    if (attendanceError) {
+      await sendReplyMessage(replyToken, '❌ 簽到失敗，請稍後重試');
+      console.error('插入簽到錯誤:', attendanceError);
+      return;
+    }
+
+    // 更新RPG經驗值
+    let expGain = 10; // 簽到 +10
+    if (exercise) expGain += 15; // 有運動 +15
+
+    const { error: rpgError } = await supabase.rpc('add_rpg_exp', {
+      p_student_id: student.id,
+      p_check_in_exp: 10,
+      p_exercise_exp: exercise ? 15 : 0
+    });
+
+    // 如果沒有RPC函數，直接更新
+    if (rpgError) {
+      const { data: rpg } = await supabase
+        .from('rpg_progress_minxin')
+        .select('*')
+        .eq('student_id', student.id)
+        .single();
+
+      if (rpg) {
+        await supabase
+          .from('rpg_progress_minxin')
+          .update({
+            check_in_exp: rpg.check_in_exp + 10,
+            exercise_exp: rpg.exercise_exp + (exercise ? 15 : 0),
+            total_exp: rpg.total_exp + expGain,
+            last_check_in_date: today
+          })
+          .eq('student_id', student.id);
       }
-
-      await supabase
-        .from('rpg_progress_minxin')
-        .update({
-          current_exp: newExp,
-          level: newLevel,
-          last_check_in: today
-        })
-        .eq('student_id', studentId);
-    } else {
-      // 創建新的 RPG 記錄
-      await supabase
-        .from('rpg_progress_minxin')
-        .insert({
-          student_id: studentId,
-          level: 1,
-          current_exp: expGain,
-          last_check_in: today
-        });
     }
 
     // 回覆成功訊息
-    const successMsg = `✅ 簽到成功！\n早餐：${checkInData.breakfast || '未填'}\n午餐：${checkInData.lunch || '未填'}\n晚餐：${checkInData.dinner || '未填'}\n運動：${checkInData.exercise ? '有' : '無'}\n\n獲得經驗值：+${expGain} EXP`;
-    
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: successMsg
-    });
+    const replyMsg = `✅ 簽到成功！\n${student.student_name}\n\n早餐：${breakfast || '未記錄'}\n午餐：${lunch || '未記錄'}\n晚餐：${dinner || '未記錄'}\n運動：${exercise ? '✅ 有' : '❌ 無'}\n\n💰 獲得經驗值：+${expGain} EXP`;
+    await sendReplyMessage(replyToken, replyMsg);
 
   } catch (error) {
-    console.error('Check-in error:', error);
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: '簽到失敗，請稍後重試。'
-    });
+    console.error('簽到處理錯誤:', error);
+    await sendReplyMessage(replyToken, '❌ 簽到出錯，請聯絡教練');
   }
 }
 
-// 解析簽到資訊
-function parseCheckIn(text) {
+// =========================================================
+// 排行榜
+// =========================================================
+
+async function sendLeaderboard(event, replyToken) {
   try {
-    const lines = text.split('\n').map(l => l.trim());
-    const result = {
-      breakfast: null,
-      lunch: null,
-      dinner: null,
-      exercise: false,
-      notes: null
-    };
-
-    for (const line of lines) {
-      if (line.includes('早餐') || line.includes('早饭')) {
-        result.breakfast = line.split(/[：:]/)[1]?.trim() || '';
-      } else if (line.includes('午餐') || line.includes('午饭')) {
-        result.lunch = line.split(/[：:]/)[1]?.trim() || '';
-      } else if (line.includes('晚餐') || line.includes('晚饭')) {
-        result.dinner = line.split(/[：:]/)[1]?.trim() || '';
-      } else if (line.includes('運動') || line.includes('运动') || line.includes('運動')) {
-        const exerciseText = line.split(/[：:]/)[1]?.trim().toLowerCase() || '';
-        result.exercise = exerciseText === '有' || exerciseText === 'yes' || exerciseText === 'y';
-      }
-    }
-
-    // 至少要有一個欄位被填寫
-    if (result.breakfast || result.lunch || result.dinner) {
-      return result;
-    }
-    return null;
-  } catch (error) {
-    console.error('Parse error:', error);
-    return null;
-  }
-}
-
-// 處理排行榜
-async function handleLeaderboard(replyToken) {
-  try {
-    const { data, error } = await supabase
+    const { data: leaderboard, error } = await supabase
       .from('rpg_leaderboard_minxin')
       .select('*')
-      .order('level', { ascending: false })
-      .order('current_exp', { ascending: false })
       .limit(10);
 
-    if (error) throw error;
+    if (error || !leaderboard || leaderboard.length === 0) {
+      await sendReplyMessage(replyToken, '📊 目前還沒有排行榜資料');
+      return;
+    }
 
-    let leaderboardText = '🏆 排行榜前 10 名：\n\n';
-    data.forEach((item, index) => {
-      leaderboardText += `${index + 1}. ${item.name || '匿名'} - 等級 ${item.level} (EXP: ${item.current_exp || 0})\n`;
+    let msg = '🏆 RPG 排行榜 Top 10\n\n';
+    leaderboard.forEach((entry, idx) => {
+      msg += `${idx + 1}. ${entry.student_name}\n`;
+      msg += `   Lv.${entry.current_level} | ${entry.total_exp} EXP\n`;
+      msg += `   簽到：${entry.total_check_ins} 天 | 運動：${entry.exercise_days} 天\n\n`;
     });
 
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: leaderboardText
-    });
+    await sendReplyMessage(replyToken, msg);
   } catch (error) {
-    console.error('Leaderboard error:', error);
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: '查詢排行榜失敗，請稍後重試。'
-    });
+    console.error('排行榜錯誤:', error);
+    await sendReplyMessage(replyToken, '❌ 無法取得排行榜');
   }
 }
 
-// 處理個人進度
-async function handleMyProgress(userId, replyToken) {
+// =========================================================
+// 個人進度
+// =========================================================
+
+async function sendMyProgress(event, userId, replyToken) {
   try {
-    const { data: studentData } = await supabase
+    const { data: student } = await supabase
       .from('students_minxin')
-      .select('id, name')
-      .eq('line_user_id', userId)
+      .select('*')
+      .eq('line_id', userId)
       .single();
 
-    if (!studentData) {
-      return client.replyMessage(replyToken, {
-        type: 'text',
-        text: '尚未找到你的記錄，請先簽到。'
-      });
+    if (!student) {
+      await sendReplyMessage(replyToken, '❌ 找不到你的帳號，請先簽到');
+      return;
     }
 
-    const { data: rpgData } = await supabase
+    const { data: rpg } = await supabase
       .from('rpg_progress_minxin')
       .select('*')
-      .eq('student_id', studentData.id)
+      .eq('student_id', student.id)
       .single();
 
-    if (!rpgData) {
-      return client.replyMessage(replyToken, {
-        type: 'text',
-        text: '尚未找到你的進度，請先簽到。'
-      });
-    }
-
-    const progressText = `📊 你的進度\n\n等級：${rpgData.level}\nEXP：${rpgData.current_exp || 0}/100\n最後簽到：${rpgData.last_check_in || '尚未簽到'}`;
-
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: progressText
-    });
+    const msg = `📈 ${student.student_name} 的進度\n\n等級：Lv.${student.current_level}\n經驗值：${student.total_exp} EXP\n\n簽到次數：${rpg?.check_in_exp / 10 || 0} 次\n運動天數：${rpg?.exercise_exp / 15 || 0} 天`;
+    await sendReplyMessage(replyToken, msg);
   } catch (error) {
-    console.error('Progress error:', error);
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: '查詢進度失敗，請稍後重試。'
-    });
+    console.error('進度查詢錯誤:', error);
+    await sendReplyMessage(replyToken, '❌ 無法取得個人進度');
   }
 }
 
+// =========================================================
+// 發送LINE回覆訊息
+// =========================================================
+
+async function sendReplyMessage(replyToken, text) {
+  try {
+    const response = await fetch('https://api.line.biz/v2/bot/message/reply', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+      },
+      body: JSON.stringify({
+        replyToken,
+        messages: [
+          {
+            type: 'text',
+            text
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      console.error(`LINE回覆失敗: ${response.status}`);
+    }
+  } catch (error) {
+    console.error('發送LINE訊息錯誤:', error);
+  }
+}
+
+// =========================================================
+// 健康檢查端點
+// =========================================================
+
+app.get('/health', (req, res) => {
+  res.status(200).send('Bot is running');
+});
+
+// =========================================================
 // 啟動伺服器
+// =========================================================
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Bot 運行在 port ${PORT}`);
+  console.log(`✅ MinXin Bot 已在 Port ${PORT} 運行`);
 });
+
+// =========================================================
+// Express middleware 用來取得原始body（LINE簽名驗證需要）
+// =========================================================
+
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    }
+  })
+);
