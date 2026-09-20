@@ -1,0 +1,22 @@
+{
+  "name": "minxin-line-bot",
+  "version": "1.0.0",
+  "description": "MinXin 健身房減重挑戰系統 - LINE Bot",
+  "main": "minxin_line_bot_complete.js",
+  "scripts": {
+    "start": "node minxin_line_bot_complete.js",
+    "dev": "nodemon minxin_line_bot_complete.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@supabase/supabase-js": "^2.38.0",
+    "@line/bot-sdk": "^7.21.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
