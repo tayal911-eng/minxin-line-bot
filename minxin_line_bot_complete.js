@@ -1,9 +1,12 @@
-   const express = require('express');
-   const { Client, middleware } = require('@line/bot-sdk');
-   const { createClient } = require('@supabase/supabase-js');
-   global.WebSocket = require('ws'); 
-   
-   const app = express();
+const express = require('express');
+const { Client, middleware } = require('@line/bot-sdk');
+const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
+
+// 設定全局 WebSocket，讓 Supabase 在 Node.js 環境中使用
+global.WebSocket = ws;
+
+const app = express();
 
 // LINE Bot 設定
 const lineConfig = {
@@ -15,15 +18,8 @@ const lineConfig = {
 // Supabase 設定
 const supabaseUrl = 'https://jxbfxtppawnqscmkvbue.supabase.co';
 const supabaseKey = 'sb_publishable_aRp3k34gK-ntEDUs4EHi2w_qqd-yrx-';
-const ws = require('ws');
-const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: {
-    params: {
-      eventsPerSecond: 10,
-    },
-  },
-});
-supabase.realtime.setAuth(channelAccessToken);
+const supabase = createClient(supabaseUrl, supabaseKey);
+
 // LINE Client
 const client = new Client(lineConfig);
 
