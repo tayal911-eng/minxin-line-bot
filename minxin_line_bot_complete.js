@@ -1,10 +1,7 @@
 const express = require('express');
-const line = require('@line/bot-sdk');
+const sdk = require('@line/bot-sdk');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
-
-// 正確導入 LINE SDK
-const { Client, middleware } = line;
 
 // 設定全局 WebSocket，讓 Supabase 在 Node.js 環境中使用
 global.WebSocket = ws;
@@ -30,10 +27,10 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
 });
 
 // LINE Client
-const client = new Client(lineConfig);
+const client = new sdk.Client(lineConfig);
 
 // Middleware
-app.use(middleware(lineConfig));
+app.use(sdk.middleware(lineConfig));
 
 // 健康檢查
 app.get('/', (req, res) => {
