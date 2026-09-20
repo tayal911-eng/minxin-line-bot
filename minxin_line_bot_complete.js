@@ -1,8 +1,9 @@
-const express = require('express');
-const { Client, middleware } = require('@line/bot-sdk');
-const { createClient } = require('@supabase/supabase-js');
-
-const app = express();
+   const express = require('express');
+   const { Client, middleware } = require('@line/bot-sdk');
+   const { createClient } = require('@supabase/supabase-js');
+   global.WebSocket = require('ws'); 
+   
+   const app = express();
 
 // LINE Bot 設定
 const lineConfig = {
