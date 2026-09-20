@@ -6,6 +6,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const ws = require('ws');
 require('dotenv').config();
 
 const app = express();
@@ -20,8 +21,12 @@ const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-// 初始化Supabase客戶端
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// 初始化Supabase客戶端 (使用 ws 套件處理 Node.js 20 WebSocket)
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  realtime: {
+    transport: ws
+  }
+});
 
 // =========================================================
 // LINE Webhook Signature 驗證
